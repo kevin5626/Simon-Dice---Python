@@ -1,140 +1,287 @@
 import pygame
 import random
 import time
+import mysql.connector
+import serial
 
-# Inicializar pygame
+arduino = serial.Serial('COM3', 9600, timeout=0.01)
+
+# ----------------------------
+# MYSQL
+# ----------------------------
+db_config = {
+     'host': 'localhost',
+     'user': 'root',
+     'password': '1234',
+     'database': 'simon_game'
+}
+conn = mysql.connector.connect(**db_config)
+cursor = conn.cursor()
+
+# ----------------------------
+# PYGAME
+# ----------------------------
 pygame.init()
+pygame.mixer.init()
 
-# Cargar la música
 pygame.mixer.music.load('MUSICA QUE ESCUCHAS EN EL SUPERMERCADO [jhxOVckpi10].mp3')
-pygame.mixer.music.play(-1, 0.0)  # Reproducir música en bucle (-1 indica bucle infinito)
+pygame.mixer.music.play(-1)
 
-# Definir los colores
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
-YELLOW = (255, 255, 0)
-GREEN = (0, 255, 0)
-CYAN = (0, 255, 255)  # Color del borde
-WHITE = (255, 255, 255)  # Color del texto
-BLACK = (0, 0, 0)  # Fondo negro
+RED = (255, 80, 80)
+BLUE = (80, 150, 255)
+YELLOW = (255, 230, 80)
+GREEN = (80, 255, 140)
+WHITE = (255, 255, 255)
+BLACK = (10, 10, 10)
+CYAN = (0, 255, 255)
 
-# Crear la pantalla
-screen_width = 600
-screen_height = 400
-screen = pygame.display.set_mode((screen_width, screen_height))
-pygame.display.set_caption("Simón Dice")
+screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+screen_width, screen_height = screen.get_size()
 
-# Definir el tamaño de los cuadrados
-square_size = 100
-margin = 50  # Margen entre los cuadrados
+font_big = pygame.font.SysFont(None, 70)
+font_small = pygame.font.SysFont(None, 40)
 
-# Calcular posiciones de los cuadrados de forma centrada y más arriba
-square_positions = {
-    'w': pygame.Rect((screen_width // 2) - square_size - margin, (screen_height // 2) - square_size - margin, square_size, square_size),   # Rojo
-    'a': pygame.Rect((screen_width // 2) + margin, (screen_height // 2) - square_size - margin, square_size, square_size),  # Azul
-    'd': pygame.Rect((screen_width // 2) - square_size - margin, (screen_height // 2) + square_size // 2, square_size, square_size),  # Amarillo
-    's': pygame.Rect((screen_width // 2) + margin, (screen_height // 2) + square_size // 2, square_size, square_size)   # Verde
+clock = pygame.time.Clock()
+
+
+# ----------------------------
+# FUNCIONES
+# ----------------------------
+def ask_player_name():
+    name = ""
+    while True:
+        screen.fill(BLACK)
+
+        draw_center_text("Ingrese su nombre:", screen_height//3, font_big)
+        draw_center_text(name, screen_height//2, font_big, WHITE)
+        draw_center_text("Enter para continuar — ESC para salir", screen_height - 100, font_small)
+
+        pygame.display.update()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    pygame.quit(); exit()
+                elif event.key == pygame.K_BACKSPACE:
+                    name = name[:-1]
+                elif event.key == pygame.K_RETURN:
+                    if name != "":
+                        return name
+                else:
+                    if len(name) < 20:
+                        name += event.unicode
+
+
+circle_radius = 140
+margin = 200
+
+circle_positions = {
+    '0': ((screen_width//2 - margin), (screen_height//2 - margin)),
+    '1': ((screen_width//2 + margin), (screen_height//2 - margin)),
+    '2': ((screen_width//2 - margin), (screen_height//2 + margin)),
+    '3': ((screen_width//2 + margin), (screen_height//2 + margin)),
 }
 
-# Fuentes
-font = pygame.font.SysFont(None, 40)
+circle_colors = {
+    '0': RED,
+    '1': BLUE,
+    '2': YELLOW,
+    '3': GREEN
+}
 
-# Función para dibujar los cuadrados con borde circular y el texto correspondiente
-def draw_squares(highlight=None):
-    # Dibujar los cuadrados de colores con borde circular
-    pygame.draw.circle(screen, RED, square_positions['w'].center, square_size // 2)  # Rojo
-    pygame.draw.circle(screen, BLUE, square_positions['a'].center, square_size // 2)  # Azul
-    pygame.draw.circle(screen, YELLOW, square_positions['d'].center, square_size // 2)  # Amarillo
-    pygame.draw.circle(screen, GREEN, square_positions['s'].center, square_size // 2)  # Verde
-    
-    # Si hay un cuadrado que debe ser destacado, dibujar el borde celeste
-    if highlight:
-        pygame.draw.circle(screen, CYAN, square_positions[highlight].center, square_size // 2, 5)  # Borde de 5 píxeles
-    
-    # Mostrar las teclas dentro de cada cuadrado
-    for key, rect in square_positions.items():
-        text = font.render(key.upper(), True, WHITE)  # Usamos el color blanco para el texto
-        screen.blit(text, (rect.centerx - text.get_width() // 2, rect.centery - text.get_height() // 2))
+def draw_center_text(text, y, font, color=WHITE):
+    msg = font.render(text, True, color)
+    screen.blit(msg, (screen_width//2 - msg.get_width()//2, y))
 
-# Función para mostrar el mensaje en pantalla
-def display_message(message, y_position):
-    text = font.render(message, True, WHITE)
-    screen.blit(text, (screen_width // 2 - text.get_width() // 2, y_position))
 
-# Función principal del juego
-def game():
-    running = True
-    clock = pygame.time.Clock()
-    start_time = time.time()
-    time_limit = 20  # 20 segundos
+def draw_all_circles(highlight=None):
+    for k, (cx, cy) in circle_positions.items():
+        pygame.draw.circle(screen, circle_colors[k], (cx, cy), circle_radius)
 
-    while running:
-        random_square = random.choice(['w', 'a', 'd', 's'])  # Selección aleatoria del cuadrado a tocar
-        display_message(f"Presiona el cuadrado: {random_square.upper()}", 50)
-        round_in_progress = True
-        start_time = time.time()  # Reiniciar el contador de tiempo cada ronda
-        
-        while round_in_progress:
-            screen.fill(BLACK)  # Fondo negro
-            draw_squares(highlight=random_square)  # Resaltar el cuadrado correcto
-            
-            # Contador de tiempo
-            elapsed_time = time.time() - start_time
-            remaining_time = time_limit - elapsed_time
-            if remaining_time <= 0:
-                round_in_progress = False
-                display_message("¡Tiempo fuera!", screen_height // 2 + 70)  # Separar un poco más el texto
-                pygame.display.update()
-                pygame.time.wait(1000)  # Esperar 1 segundo antes de finalizar el juego
-                running = False  # Terminar la ejecución del juego
-            else:
-                time_text = font.render(f"Tiempo: {int(remaining_time)}s", True, WHITE)
-                screen.blit(time_text, (screen_width // 2 - time_text.get_width() // 2, 40))  # Separar un poco más el texto
+        if highlight == k:
+            pygame.draw.circle(screen, CYAN, (cx, cy), circle_radius + 10, 6)
 
-            # Mostrar el mensaje de la secuencia
-            pygame.display.update()
 
-            # Comprobar los eventos de teclado
+def animate_glow(key):
+    cx, cy = circle_positions[key]
+    base_color = circle_colors[key]
+
+    for glow in range(0, 160, 15):
+        screen.fill(BLACK)
+        draw_all_circles(highlight=key)
+
+        bright = (
+            min(base_color[0] + glow, 255),
+            min(base_color[1] + glow, 255),
+            min(base_color[2] + glow, 255)
+        )
+
+        pygame.draw.circle(screen, bright, (cx, cy), circle_radius)
+        pygame.display.update()
+        pygame.time.delay(30)
+
+    for glow in range(160, 0, -15):
+        screen.fill(BLACK)
+        draw_all_circles(highlight=key)
+
+        bright = (
+            min(base_color[0] + glow, 255),
+            min(base_color[1] + glow, 255),
+            min(base_color[2] + glow, 255)
+        )
+
+        pygame.draw.circle(screen, bright, (cx, cy), circle_radius)
+        pygame.display.update()
+        pygame.time.delay(30)
+
+
+# -------------------------------------------------
+# LECTURA DE ARDUINO
+# -------------------------------------------------
+def read_arduino_key():
+    try:
+        if arduino.in_waiting > 0:
+            data = arduino.readline().decode(errors="ignore").strip()
+            if data in ["0", "1", "2", "3"]:
+                return data
+        return None
+    except:
+        return None
+
+
+# -------------------------------------------------
+# ESPERA HASTA QUE NO HAYA PULSOS (SOLTAR BOTÓN)
+# -------------------------------------------------
+def wait_button_release(timeout_ms=250):
+    release_start = pygame.time.get_ticks()
+
+    while True:
+
+        # ESC para salir
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                pygame.quit(); exit()
+
+        key = read_arduino_key()
+
+        if key is not None:
+            release_start = pygame.time.get_ticks()
+
+        if pygame.time.get_ticks() - release_start > timeout_ms:
+            return
+
+        clock.tick(60)
+
+
+# -------------------------------------------------
+# ESTADÍSTICAS
+# -------------------------------------------------
+def show_stats(stats):
+    rounds, correct, incorrect, avg_reaction = stats
+
+    while True:
+        screen.fill(BLACK)
+        draw_center_text("Estadísticas del Juego", 100, font_big, CYAN)
+        draw_center_text(f"Rondas jugadas: {rounds}", 250, font_small)
+        draw_center_text(f"Aciertos: {correct}", 310, font_small)
+        draw_center_text(f"Errores: {incorrect}", 370, font_small)
+        draw_center_text(f"Tiempo promedio: {avg_reaction:.3f} s", 430, font_small)
+        draw_center_text("ESC para salir — R para reiniciar — E volver a comenzar", screen_height - 120, font_small)
+        pygame.display.update()
+
+        for event in pygame.event.get():
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    pygame.quit(); exit()
+                if event.key == pygame.K_e:
+                    game()
+                if event.key == pygame.K_r:
+                    return "RETRY"
+
+
+# =====================================================
+#              JUEGO PRINCIPAL (MODIFICADO)
+# =====================================================
+def game(player_name=None):
+
+    # ✔ Si NO hay nombre, lo pide
+    if player_name is None:
+        player_name = ask_player_name()
+
+    round_number = 1
+    correct = 0
+    incorrect = 0
+    reaction_times = []
+
+    while True:
+        target = random.choice(['0','1','2','3'])
+
+        animate_glow(target)
+        wait_button_release()
+
+        time_limit = max(5, 60 - (round_number - 1) * 2)
+        start_time = time.time()
+
+        pressed = None
+
+        while pressed is None:
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
-                    running = False
-                    round_in_progress = False
+                    pygame.quit(); exit()
                 if event.type == pygame.KEYDOWN:
-                    # Si presionó la tecla correcta
-                    if event.key == pygame.K_w and random_square == 'w':
-                        display_message("¡Correcto!", screen_height // 2 + 70)
-                        pygame.display.update()
-                        pygame.time.wait(1000)  # Esperar 1 segundo antes de la siguiente ronda
-                        round_in_progress = False  # Terminar la ronda
-                    elif event.key == pygame.K_a and random_square == 'a':
-                        display_message("¡Correcto!", screen_height // 2 + 70)
-                        pygame.display.update()
-                        pygame.time.wait(1000)  # Esperar 1 segundo antes de la siguiente ronda
-                        round_in_progress = False  # Terminar la ronda
-                    elif event.key == pygame.K_d and random_square == 'd':
-                        display_message("¡Correcto!", screen_height // 2 + 70)
-                        pygame.display.update()
-                        pygame.time.wait(1000)  # Esperar 1 segundo antes de la siguiente ronda
-                        round_in_progress = False  # Terminar la ronda
-                    elif event.key == pygame.K_s and random_square == 's':
-                        display_message("¡Correcto!", screen_height // 2 + 70)
-                        pygame.display.update()
-                        pygame.time.wait(1000)  # Esperar 1 segundo antes de la siguiente ronda
-                        round_in_progress = False  # Terminar la ronda
-                    # Si presionó la tecla incorrecta
-                    elif (event.key == pygame.K_w and random_square != 'w') or \
-                         (event.key == pygame.K_a and random_square != 'a') or \
-                         (event.key == pygame.K_d and random_square != 'd') or \
-                         (event.key == pygame.K_s and random_square != 's'):
-                        display_message("¡Incorrecto! Fin del juego.", screen_height // 2 + 70)
-                        pygame.display.update()
-                        pygame.time.wait(1000)  # Esperar 1 segundo antes de terminar
-                        round_in_progress = False  # Terminar la ronda
-                        running = False  # Terminar la ejecución del juego
 
-            clock.tick(30)  # Limitar FPS
+                    if event.key == pygame.K_ESCAPE:
+                        pygame.quit(); exit()
 
-    pygame.quit()
+                    # ✔ Reinicio sin pedir nombre
+                    if event.key == pygame.K_r:
+                        return game(player_name)
 
-if __name__ == "__main__":
-    game()
+            elapsed = time.time() - start_time
+            remaining = time_limit - elapsed
+
+            if remaining <= 0:
+                avg_reaction = sum(reaction_times) / len(reaction_times) if reaction_times else 0
+                show_stats((round_number - 1, correct, incorrect + 1, avg_reaction))
+                return
+
+            pressed = read_arduino_key()
+
+            screen.fill(BLACK)
+            draw_all_circles(highlight=target)
+            draw_center_text(f"Ronda {round_number}", 80, font_big)
+            timer_text = f"{int(remaining):02d}"
+            draw_center_text(f"Tiempo: {timer_text}s", 160, font_small, WHITE)
+
+            pygame.display.update()
+            clock.tick(60)
+
+        reaction = time.time() - start_time
+
+        cursor.execute("""
+            INSERT INTO reaction_times
+            (player_name, round_number, target_key, pressed_key, reaction_time)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (player_name, round_number, target, pressed, reaction))
+        conn.commit()
+
+        if pressed == target:
+            correct += 1
+            reaction_times.append(reaction)
+            round_number += 1
+        else:
+            incorrect += 1
+            break
+
+    avg_reaction = sum(reaction_times) / len(reaction_times) if reaction_times else 0
+    res = show_stats((round_number - 1, correct, incorrect, avg_reaction))
+
+    # ✔ Reinicia sin pedir nombre
+    if res == "RETRY":
+        return game(player_name)
+
+# INICIO DEL PROGRAMA
+game()
